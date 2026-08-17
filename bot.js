@@ -5,6 +5,7 @@ const STATE_FILE = 'state.json';
 
 async function run() {
   console.log('Bot ishga tushdi...');
+  console.log('Node versiyasi:', process.version);
 
   const BOT_TOKEN = process.env.BOT_TOKEN;
   if (!BOT_TOKEN) {
@@ -24,16 +25,20 @@ async function run() {
 
   // Gemini kaliti: avval state'dagi, bo'lmasa GitHub secret'dagi
   const geminiKey = state.apiKey || process.env.GEMINI_API_KEY || '';
+  console.log('Gemini kaliti:', geminiKey ? "o'rnatilgan" : "yo'q");
 
   // Telegram API — Node 20'ning ichki fetch'i (tashqi kutubxona kerak emas)
   async function telegram(method, params = {}) {
     try {
-      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+      const url = `https://api.telegram.org/bot${BOT_TOKEN}/${method}`;
+      console.log(`Telegram so'rov: ${method}`);
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
       const data = await res.json();
+      console.log(`Telegram javob (${method}):`, JSON.stringify(data).slice(0, 200));
       if (!data.ok) console.error(`Telegram API xato (${method}):`, data.description);
       return data;
     } catch (e) {
@@ -57,6 +62,7 @@ async function run() {
         }
       );
       const data = await res.json();
+      console.log('Gemini javob:', JSON.stringify(data).slice(0, 300));
       return (
         data?.candidates?.[0]?.content?.parts?.[0]?.text ||
         data?.error?.message ||
@@ -69,7 +75,9 @@ async function run() {
 
   console.log('Xabarlar tekshirilmoqda...');
   const updates = await telegram('getUpdates', { offset: state.offset + 1 });
-  const list = updates.result ?? [];
+  console.log('updates obyekti:', typeof updates, updates ? Object.keys(updates) : 'null');
+  const list = updates?.result ?? [];
+  console.log(`Olingan xabarlar soni: ${list.length}`);
 
   for (const update of list) {
     state.offset = update.update_id;
