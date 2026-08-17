@@ -1,122 +1,117 @@
-import fs from 'fs';
+// Telegram yangiliklar boti — Gemini AI bilan
+import { readFileSync, writeFileSync } from 'node:fs';
 
-// Sozlamalar
-const STATE_FILE = 'state.json';
+const TOKEN = process.env.BOT_TOKEN;
+const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
-async function run() {
-  console.log('Bot ishga tushdi...');
-  console.log('Node versiyasi:', process.version);
-
-  const BOT_TOKEN = process.env.BOT_TOKEN;
-  if (!BOT_TOKEN) {
-    console.error("XATO: BOT_TOKEN topilmadi! GitHub Secrets'ga qo'shing.");
-    process.exit(1);
-  }
-
-  // Holatni yuklash: offset = oxirgi ko'rilgan xabar, apiKey = Gemini kaliti
-  let state = { offset: 0, apiKey: '', model: 'gemini-2.5-flash' };
-  try {
-    if (fs.existsSync(STATE_FILE)) {
-      state = { ...state, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) };
-    }
-  } catch (e) {
-    console.log("State o'qishda xato, standart holat ishlatilmoqda:", e.message);
-  }
-
-  // Gemini kaliti: avval state'dagi, bo'lmasa GitHub secret'dagi
-  const geminiKey = state.apiKey || process.env.GEMINI_API_KEY || '';
-  console.log('Gemini kaliti:', geminiKey ? "o'rnatilgan" : "yo'q");
-
-  // Telegram API — Node 20'ning ichki fetch'i (tashqi kutubxona kerak emas)
-  async function telegram(method, params = {}) {
-    try {
-      const url = `https://api.telegram.org/bot${BOT_TOKEN}/${method}`;
-      console.log(`Telegram so'rov: ${method}`);
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-      const data = await res.json();
-      console.log(`Telegram javob (${method}):`, JSON.stringify(data).slice(0, 200));
-      if (!data.ok) console.error(`Telegram API xato (${method}):`, data.description);
-      return data;
-    } catch (e) {
-      console.error(`Telegram so'rovi amalga oshmadi (${method}):`, e.message);
-      return { ok: false };
-    }
-  }
-
-  // Gemini'dan javob olish
-  async function askGemini(prompt) {
-    if (!geminiKey) {
-      return "Gemini API kaliti o'rnatilmagan. /setkey [kalit] buyrug'i bilan o'rnating.";
-    }
-    try {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${geminiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-        }
-      );
-      const data = await res.json();
-      console.log('Gemini javob:', JSON.stringify(data).slice(0, 300));
-      return (
-        data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-        data?.error?.message ||
-        'AI javob bera olmadi. Kalitni tekshiring.'
-      );
-    } catch (e) {
-      return 'Gemini API bilan bog\'lanishda xato: ' + e.message;
-    }
-  }
-
-  console.log('Xabarlar tekshirilmoqda...');
-  const updates = await telegram('getUpdates', { offset: state.offset + 1 });
-  console.log('updates obyekti:', typeof updates, updates ? Object.keys(updates) : 'null');
-  const list = updates?.result ?? [];
-  console.log(`Olingan xabarlar soni: ${list.length}`);
-
-  for (const update of list) {
-    state.offset = update.update_id;
-    const msg = update.message;
-    if (!msg || !msg.text) continue;
-
-    const text = msg.text;
-    const chatId = msg.chat.id;
-    console.log(`Xabar keldi: ${text}`);
-
-    if (text.startsWith('/start')) {
-      await telegram('sendMessage', {
-        chat_id: chatId,
-        text: "Salom! Men Gemini AI botman.\n\n/setkey [kalit] - API kalit o'rnatish\n/status - holatni ko'rish",
-      });
-    } else if (text.startsWith('/setkey')) {
-      const key = text.split(' ')[1];
-      if (key) {
-        state.apiKey = key;
-        await telegram('sendMessage', { chat_id: chatId, text: '✅ API kalit saqlandi!' });
-      } else {
-        await telegram('sendMessage', { chat_id: chatId, text: 'Kalitni yozing: /setkey AIza...' });
-      }
-    } else if (text.startsWith('/status')) {
-      await telegram('sendMessage', {
-        chat_id: chatId,
-        text: `Holat:\nKalit: ${geminiKey ? "O'rnatilgan ✅" : "Yo'q ❌"}\nModel: ${state.model}`,
-      });
-    } else {
-      const aiRes = await askGemini(text);
-      await telegram('sendMessage', { chat_id: chatId, text: aiRes });
-    }
-  }
-
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-  console.log(`Ish yakunlandi. Ko'rilgan xabarlar: ${list.length}`);
+if (!TOKEN) {
+  console.error('XATO: BOT_TOKEN yoʻq — repo Secrets ga qoʻshing');
+  process.exit(1);
 }
 
-run().catch((err) => {
-  console.error('Global xato:', err);
-  process.exit(1);
-});
+const API = `https://api.telegram.org/bot${TOKEN}`;
+const MODEL = 'gemini-2.5-flash';
+
+// Gemini AI orqali yangilik generatsiya qilish
+async function getAIUpdate() {
+  if (!GEMINI_KEY) {
+    return "⚠️ Gemini API kaliti topilmadi. Iltimos, GitHub Secrets ga GEMINI_API_KEY qo'shing.";
+  }
+
+  const prompt = "Bugungi dunyo yangiliklari, texnologiya va qiziqarli voqealar haqida qisqacha, 5-6 ta banddan iborat o'zbek tilida ma'lumot ber. Har bir yangilik qisqa va lo'nda bo'lsin. Oxirida Koreya vaqtini ham eslatib o't.";
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }]
+        })
+      }
+    );
+    const data = await response.json();
+
+    // null-safety: har qanday maydon yoʻqolgan boʻlsa ham xato bermaydi
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text) return text;
+
+    const errMsg = data?.error?.message;
+    if (errMsg) return `Gemini xatosi: ${errMsg}`;
+
+    return "Yangiliklarni yuklashda noma'lum xatolik yuz berdi.";
+  } catch (e) {
+    return `Yangiliklarni yuklashda xatolik: ${e.message}`;
+  }
+}
+
+function loadState() {
+  try {
+    return JSON.parse(readFileSync('state.json', 'utf8'));
+  } catch {
+    return { offset: 0 };
+  }
+}
+
+async function send(chatId, text) {
+  try {
+    const res = await fetch(`${API}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error(`Xabar yuborishda xato (${chatId}):`, data.description);
+    }
+  } catch (e) {
+    console.error('Xabar yuborishda xato:', e.message);
+  }
+}
+
+async function main() {
+  const state = loadState();
+
+  // Yangi xabarlarni tekshirish
+  let data;
+  try {
+    const res = await fetch(`${API}/getUpdates?offset=${state.offset}&timeout=0`);
+    data = await res.json();
+  } catch (e) {
+    console.error('getUpdates soʻrovida xato:', e.message);
+    return;
+  }
+
+  if (!data.ok) {
+    console.error('Telegram getUpdates xato:', data.description);
+    return;
+  }
+
+  for (const update of data.result ?? []) {
+    state.offset = update.update_id + 1;
+    const message = update.message;
+    if (!message?.chat?.id) continue;
+
+    const chatId = message.chat.id;
+    const text = (message.text || '').trim().toLowerCase();
+
+    if (text === '/start') {
+      await send(chatId, '⏳ Yangiliklar tayyorlanmoqda...');
+      const aiNews = await getAIUpdate();
+      await send(chatId, `📢 Bugungi yangiliklar:\n\n${aiNews}`);
+    } else {
+      await send(chatId, "Yangiliklarni olish uchun /start buyrug'ini yuboring.");
+    }
+  }
+
+  writeFileSync('state.json', JSON.stringify(state, null, 2));
+  console.log('Ish yakunlandi. offset =', state.offset);
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('Global xato:', err);
+    process.exit(0);
+  });
