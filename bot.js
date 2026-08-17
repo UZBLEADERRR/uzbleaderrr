@@ -58,7 +58,8 @@ async function run() {
       );
       const data = await res.json();
       return (
-        data.candidates?.[0]?.content?.parts?.[0]?.text ||
+        data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+        data?.error?.message ||
         'AI javob bera olmadi. Kalitni tekshiring.'
       );
     } catch (e) {
